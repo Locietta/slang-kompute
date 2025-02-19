@@ -1,0 +1,3 @@
+[submodule "3rd-party/kompute"]
+	path = 3rd-party/kompute
+	url = git@github.com:KomputeProject/kompute.git
