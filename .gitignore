@@ -1,2 +1,15 @@
 build
 .xmake
+
+# debug files
+*.log
+*.spv
+*.glsl
+
+# temporary files
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
+*~
+*.swp
