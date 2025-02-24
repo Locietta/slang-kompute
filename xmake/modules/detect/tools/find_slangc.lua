@@ -20,11 +20,12 @@ function main(opt)
     opt = opt or {}
     opt.paths = opt.paths or {
         "$(env PATH)",
+        "/opt/shader-slang-bin/bin",
         "$(env VULKAN_SDK)/Bin",
         "$(env VK_SDK_PATH)/Bin",
     }
     opt.check = opt.check or "-v"
-    local program = find_program(opt.program or "slangc.exe", opt)
+    local program = find_program(opt.program or "slangc", opt)
     local version = nil
     if program and opt and opt.version then
         version = find_programver(program, opt)
