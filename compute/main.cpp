@@ -1,23 +1,9 @@
 
 #include <vector>
-#include <bit>
-#include <span>
 #include <fmt/core.h>
-
 #include <kompute/Kompute.hpp>
 
-template<size_t N>
-consteval auto bytes_to_words(std::span<const unsigned char, N> bytes) {
-    static_assert(N % 4 == 0, "Byte array size must be a multiple of 4");
-
-    std::array<uint32_t, N / 4> words;
-    for (size_t i = 0; i < N; i += 4) {
-        // Extract 4-byte chunk as a temporary array
-        const auto chunk = std::array{bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]};
-        words[i / 4] = std::bit_cast<uint32_t>(chunk);
-    }
-    return words;
-}
+#include "utils.hpp"
 
 int main() {
     constexpr uint32_t iterations = 100;
@@ -45,11 +31,10 @@ int main() {
 
     mgr.sequence()->eval<kp::OpSyncDevice>(params);
 
-    alignas(4) constexpr uint8_t k_cs_code[] = {
+    constexpr auto k_cs_code = bytes_to_words(
 #include "compute.spv.h"
-    };
-    constexpr auto k_cs_code_dword = bytes_to_words(std::span(k_cs_code));
-    std::vector<uint32_t> spirv(k_cs_code_dword.begin(), k_cs_code_dword.end());
+    );
+    std::vector<uint32_t> spirv(k_cs_code.begin(), k_cs_code.end());
 
     std::shared_ptr<kp::Algorithm> algorithm = mgr.algorithm(
         params, spirv, kp::Workgroup({5}), std::vector<float>({5.0}));
