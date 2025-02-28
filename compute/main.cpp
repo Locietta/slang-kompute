@@ -7,9 +7,15 @@
 
 int main() {
     constexpr uint32_t iterations = 100;
-    float learning_rate = 0.1;
+    float learning_rate = 0.5;
 
     kp::Manager mgr;
+
+    auto devices = mgr.listDevices();
+    fmt::print("Device list:\n");
+    for (size_t i = 0; i < devices.size(); ++i) {
+        fmt::print("{}: {}\n", i, std::string_view(devices[i].getProperties().deviceName));
+    }
 
     std::shared_ptr<kp::TensorT<float>> x_i = mgr.tensor({0, 1, 1, 1, 1});
     std::shared_ptr<kp::TensorT<float>> x_j = mgr.tensor({0, 0, 0, 1, 1});
@@ -49,10 +55,14 @@ int main() {
     for (size_t i = 0; i < iterations; i++) {
         sq->eval();
 
-        for (size_t j = 0; j < b_out->size(); j++) {
+        for (auto j = 0zu; j < b_out->size(); ++j) {
             w_in->data()[0] -= learning_rate * w_out_i->data()[j];
             w_in->data()[1] -= learning_rate * w_out_j->data()[j];
             b_in->data()[0] -= learning_rate * b_out->data()[j];
+        }
+
+        for (auto j = 0zu; j < l_out->size(); ++j) {
+            fmt::println("Loss: {}", l_out->data()[j]);
         }
     }
 

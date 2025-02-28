@@ -22,4 +22,4 @@ add_requires("kompute")
 -- add_requires("kompute", {debug = true})
 add_requires("fmt")
 
-includes("compute")
+includes("*/xmake.lua")

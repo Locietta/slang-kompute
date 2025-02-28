@@ -34,6 +34,3 @@ CheckOptions:
   - key: readability-identifier-naming.MemberIgnoredRegexp
     # HACK: make `aaa_` valid for clang-tidy check
     value: "^([A-Z]|([A-Z][A-Z0-9])|[a-z][a-z0-9_]*_)$"
-  - key: readability-identifier-naming.StructIgnoredRegexp
-    # ignore internal symbol from `LUISA_STRUCT` macro's expansion
-    value: "FMT_COMPILE_STRING"
