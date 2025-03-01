@@ -66,8 +66,8 @@ int main() {
         // Create ray generator and generate rays
         nerf::RayGenerator ray_generator(mgr, width, height, intrinsic);
         ray_generator.generate_rays(c2w);
-        auto ray_origins = ray_generator.get_ray_origins();
-        auto ray_directions = ray_generator.get_ray_directions();
+        auto ray_origins = ray_generator.get_ray_origins_sync();
+        auto ray_directions = ray_generator.get_ray_directions_sync();
 
         // Create ray sampler
         nerf::RaySampler ray_sampler(mgr, ray_origins, ray_directions, n_samples, false, near, far);
@@ -76,9 +76,9 @@ int main() {
         ray_sampler.sample_points();
 
         // Get samples
-        auto sample_positions = ray_sampler.get_sample_positions();
-        auto sample_directions = ray_sampler.get_sample_directions();
-        auto sample_z_vals = ray_sampler.get_sample_z_vals();
+        auto sample_positions = ray_sampler.get_sample_positions_sync();
+        auto sample_directions = ray_sampler.get_sample_directions_sync();
+        auto sample_z_vals = ray_sampler.get_sample_z_vals_sync();
 
         // Test sample counts
         TEST_ASSERT(sample_positions->size() == num_rays * n_samples * 3, "Sample positions size is incorrect");
@@ -143,7 +143,7 @@ int main() {
         // Now test with perturbation
         nerf::RaySampler ray_sampler2(mgr, ray_origins, ray_directions, n_samples, true, near, far);
         ray_sampler2.sample_points();
-        auto perturbed_z_vals = ray_sampler2.get_sample_z_vals();
+        auto perturbed_z_vals = ray_sampler2.get_sample_z_vals_sync();
 
         // Test that perturbed z values are different from unperturbed ones
         bool some_values_different = false;

@@ -31,6 +31,11 @@ public:
     std::shared_ptr<kp::TensorT<float>> get_sample_directions();
     std::shared_ptr<kp::TensorT<float>> get_sample_z_vals();
 
+    // Get sample positions, directions, and z-values (with CPU sync - for testing)
+    std::shared_ptr<kp::TensorT<float>> get_sample_positions_sync();
+    std::shared_ptr<kp::TensorT<float>> get_sample_directions_sync();
+    std::shared_ptr<kp::TensorT<float>> get_sample_z_vals_sync();
+
 private:
     kp::Manager &manager_;
     uint32_t num_rays_;
@@ -51,10 +56,10 @@ private:
     std::mt19937 gen_;
     // random number buffer to upload perturbation values
     std::shared_ptr<kp::TensorT<float>> randoms_;
-    
+
     // Algorithm
     std::shared_ptr<kp::Algorithm> ray_sampler_algo_;
-    
+
     // Enable perturbation for ray sampling
     bool perturb_ = true;
 };

@@ -27,6 +27,10 @@ public:
     std::shared_ptr<kp::TensorT<float>> get_ray_origins();
     std::shared_ptr<kp::TensorT<float>> get_ray_directions();
 
+    // Get ray origins and directions (with sync to CPU - for testing)
+    std::shared_ptr<kp::TensorT<float>> get_ray_origins_sync();
+    std::shared_ptr<kp::TensorT<float>> get_ray_directions_sync();
+
 private:
     kp::Manager &manager_;
     uint32_t width_;

@@ -33,6 +33,9 @@ public:
     // Get encoded output
     std::shared_ptr<kp::TensorT<float>> get_encoded();
 
+    // Get encoded output (with sync to CPU - for testing)
+    std::shared_ptr<kp::TensorT<float>> get_encoded_sync();
+
     // Get output dimension
     uint32_t get_output_dim() const { return output_dim_; }
 

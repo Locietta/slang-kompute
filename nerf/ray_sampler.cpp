@@ -81,7 +81,6 @@ void RaySampler::sample_points() {
     manager_.sequence()
         ->record<kp::OpSyncDevice>({ray_origins_, ray_directions_, randoms_})
         ->record<kp::OpAlgoDispatch>(ray_sampler_algo_, std::vector{sampling_params_})
-        ->record<kp::OpSyncLocal>({sample_positions_, sample_directions_, sample_z_vals_})
         ->eval();
 }
 
@@ -94,6 +93,27 @@ std::shared_ptr<kp::TensorT<float>> RaySampler::get_sample_directions() {
 }
 
 std::shared_ptr<kp::TensorT<float>> RaySampler::get_sample_z_vals() {
+    return sample_z_vals_;
+}
+
+std::shared_ptr<kp::TensorT<float>> RaySampler::get_sample_positions_sync() {
+    manager_.sequence()
+        ->record<kp::OpSyncLocal>({sample_positions_})
+        ->eval();
+    return sample_positions_;
+}
+
+std::shared_ptr<kp::TensorT<float>> RaySampler::get_sample_directions_sync() {
+    manager_.sequence()
+        ->record<kp::OpSyncLocal>({sample_directions_})
+        ->eval();
+    return sample_directions_;
+}
+
+std::shared_ptr<kp::TensorT<float>> RaySampler::get_sample_z_vals_sync() {
+    manager_.sequence()
+        ->record<kp::OpSyncLocal>({sample_z_vals_})
+        ->eval();
     return sample_z_vals_;
 }
 

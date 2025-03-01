@@ -55,7 +55,6 @@ void RayGenerator::generate_rays(const glm::mat4 &c2w) {
     // Create a new sequence for ray generation and execute it
     manager_.sequence()
         ->record<kp::OpAlgoDispatch>(ray_generator_algo_, std::vector{camera_params_})
-        ->record<kp::OpSyncLocal>({ray_origins_, ray_directions_})
         ->eval();
 }
 
@@ -64,6 +63,18 @@ std::shared_ptr<kp::TensorT<float>> RayGenerator::get_ray_origins() {
 }
 
 std::shared_ptr<kp::TensorT<float>> RayGenerator::get_ray_directions() {
+    return ray_directions_;
+}
+
+std::shared_ptr<kp::TensorT<float>> RayGenerator::get_ray_origins_sync() {
+    manager_.sequence()
+        ->eval<kp::OpSyncLocal>({ray_origins_});
+    return ray_origins_;
+}
+
+std::shared_ptr<kp::TensorT<float>> RayGenerator::get_ray_directions_sync() {
+    manager_.sequence()
+        ->eval<kp::OpSyncLocal>({ray_directions_});
     return ray_directions_;
 }
 

@@ -90,7 +90,7 @@ int main() {
         encoder.encode(input_tensor);
 
         // Get encoded output
-        auto encoded_tensor = encoder.get_encoded();
+        auto encoded_tensor = encoder.get_encoded_sync();
 
         // Verify output size
         TEST_ASSERT(encoded_tensor->size() == num_vectors * expected_output_dim,
@@ -131,7 +131,7 @@ int main() {
 
         // Encode with position encoder
         pos_encoder.encode(input_tensor);
-        auto pos_encoded = pos_encoder.get_encoded();
+        auto pos_encoded = pos_encoder.get_encoded_sync();
 
         // Verify position encoder output size
         expected_output_dim = 3 + 2 * 3 * 10; // include_input + 2 * dims * num_freqs
@@ -143,7 +143,7 @@ int main() {
 
         // Encode with direction encoder
         dir_encoder.encode(input_tensor);
-        auto dir_encoded = dir_encoder.get_encoded();
+        auto dir_encoded = dir_encoder.get_encoded_sync();
 
         // Verify direction encoder output size
         expected_output_dim = 3 + 2 * 3 * 4; // include_input + 2 * dims * num_freqs
@@ -161,7 +161,7 @@ int main() {
 
         // Encode with the same position encoder but different batch size
         pos_encoder.encode(input_tensor2);
-        auto encoded2 = pos_encoder.get_encoded();
+        auto encoded2 = pos_encoder.get_encoded_sync();
 
         // Verify new output size
         TEST_ASSERT(encoded2->size() == num_vectors2 * pos_encoder.get_output_dim(),

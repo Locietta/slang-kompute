@@ -51,8 +51,8 @@ int main() {
         ray_generator.generate_rays(c2w);
 
         // Get ray data
-        auto ray_origins = ray_generator.get_ray_origins();
-        auto ray_directions = ray_generator.get_ray_directions();
+        auto ray_origins = ray_generator.get_ray_origins_sync();
+        auto ray_directions = ray_generator.get_ray_directions_sync();
 
         // Print all ray directions for debugging
         fmt::print("Ray directions:\n");

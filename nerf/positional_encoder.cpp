@@ -85,6 +85,7 @@ std::shared_ptr<kp::Algorithm> PositionalEncoder::create_algorithm(
         {});
 }
 
+// Modify positional_encoder.cpp
 void PositionalEncoder::encode(std::shared_ptr<kp::TensorT<float>> inputs) {
     // Calculate number of input vectors
     uint32_t num_vectors = inputs->size() / input_dim_;
@@ -98,15 +99,22 @@ void PositionalEncoder::encode(std::shared_ptr<kp::TensorT<float>> inputs) {
     // Create algorithm for this specific input/output pair
     auto algorithm = create_algorithm(inputs, encoded_);
 
-    // Run the encoding algorithm
+    // Run the encoding algorithm - don't sync to CPU
     manager_.sequence()
         ->record<kp::OpSyncDevice>({inputs})
         ->record<kp::OpAlgoDispatch>(algorithm)
-        ->record<kp::OpSyncLocal>({encoded_})
         ->eval();
 }
 
 std::shared_ptr<kp::TensorT<float>> PositionalEncoder::get_encoded() {
+    return encoded_;
+}
+
+std::shared_ptr<kp::TensorT<float>> PositionalEncoder::get_encoded_sync() {
+    // Sync to CPU before returning for testing purposes
+    manager_.sequence()
+        ->record<kp::OpSyncLocal>({encoded_})
+        ->eval();
     return encoded_;
 }
 
