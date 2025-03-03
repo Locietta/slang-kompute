@@ -5,7 +5,7 @@
 #include <cstdint>
 #include <concepts>
 
-template<typename Byte, typename... Args>
+template <typename Byte, typename... Args>
 consteval auto bytes_to_words(Byte byte, Args... bytes) {
     constexpr auto length = sizeof...(Args) + 1;
     static_assert(length % 4 == 0, "Byte array size must be a multiple of 4");
@@ -19,7 +19,7 @@ consteval auto bytes_to_words(Byte byte, Args... bytes) {
     return words;
 }
 
-template<std::integral T>
+template <std::integral T>
 constexpr T divide_and_round_up(T dividend, T divisor) {
     return (dividend + divisor - 1) / divisor;
 }
