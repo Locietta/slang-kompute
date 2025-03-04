@@ -7,7 +7,7 @@
 namespace kp {
 
 struct OpClear : OpBase {
-    OpClear(std::vector<std::shared_ptr<kp::Memory>> tensors, kp::Manager &manager, float clear_value = 0.0f);
+    OpClear(std::vector<std::shared_ptr<kp::Memory>> mems, float clear_value = 0.0f);
     OpClear(const OpClear &) = delete;
     ~OpClear() override = default;
 
@@ -16,8 +16,7 @@ struct OpClear : OpBase {
     void postEval(const vk::CommandBuffer &) override {}
 
 private:
-    kp::Manager &manager_;
-    std::vector<std::shared_ptr<kp::Memory>> tensors_; 
+    std::vector<std::shared_ptr<kp::Memory>> mems_; 
     float clear_value_ = 0.0f;
 };
 

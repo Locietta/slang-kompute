@@ -1,5 +1,7 @@
 // nerf/OpClear.cpp
 #include "OpClear.h"
+
+#include <bit>
 #include "utils.hpp"
 
 namespace kp {
@@ -11,25 +13,53 @@ const static std::vector<uint32_t> k_spirv = [] {
     return std::vector(cs_code.begin(), cs_code.end());
 }();
 
-OpClear::OpClear(std::vector<std::shared_ptr<kp::Memory>> tensors, kp::Manager &manager, float clear_value)
-    : manager_(manager), tensors_(tensors), clear_value_(clear_value) {}
+OpClear::OpClear(std::vector<std::shared_ptr<kp::Memory>> mems, float clear_value)
+    : mems_(mems), clear_value_(clear_value) {}
 
 void OpClear::record(const vk::CommandBuffer &command_buffer) {
 
-    for (auto tensor : tensors_) {
-        const auto workgroup_size = 64u;
-        const auto num_workgroups = divide_and_round_up(tensor->size(), workgroup_size);
+    for (auto mem : mems_) {
+        if (mem->type() == Memory::Type::eTensor) {
+            const auto tensor = std::static_pointer_cast<Tensor>(mem);
+            const auto buffer = tensor->getPrimaryBuffer();
+            if (!buffer) {
+                throw std::runtime_error("Tensor primary buffer not allocated");
+            }
+            command_buffer.fillBuffer(*buffer, 0, tensor->size() * sizeof(float), std::bit_cast<uint32_t>(clear_value_));
 
-        auto algo = manager_.algorithm({tensor}, k_spirv, {num_workgroups, 1, 1}, {}, {clear_value_});
-        // TODO: handle Image
-        tensor->recordPrimaryMemoryBarrier(command_buffer, vk::AccessFlagBits::eTransferWrite,
-                                           vk::AccessFlagBits::eShaderRead,
-                                           vk::PipelineStageFlagBits::eTransfer,
-                                           vk::PipelineStageFlagBits::eComputeShader);
-        algo->setPushConstants(&clear_value_, 1, sizeof(float));
-        algo->recordBindCore(command_buffer);
-        algo->recordBindPush(command_buffer);
-        algo->recordDispatch(command_buffer);
+        } else if (mem->type() == Memory::Type::eImage) {
+            // TODO: Image clear
+            const auto image = std::static_pointer_cast<Image>(mem);
+            const auto vk_image = image->getPrimaryImage();
+            if (!vk_image) {
+                throw std::runtime_error("Image primary image not allocated");
+            }
+
+            const auto vk_image_layout = image->getPrimaryImageLayout();
+            const auto vk_clear_value = vk::ClearColorValue(std::array{
+                clear_value_,
+                clear_value_,
+                clear_value_,
+                1.0f,
+            });
+
+            const auto range = vk::ImageSubresourceRange{
+                vk::ImageAspectFlagBits::eColor,
+                0,
+                1,
+                0,
+                1,
+            };
+            image->recordPrimaryImageBarrier(command_buffer,
+                                             vk::AccessFlagBits::eMemoryRead,
+                                             vk::AccessFlagBits::eMemoryWrite,
+                                             vk::PipelineStageFlagBits::eTransfer,
+                                             vk::PipelineStageFlagBits::eTransfer,
+                                             vk::ImageLayout::eTransferDstOptimal);
+            command_buffer.clearColorImage(*vk_image, vk_image_layout, vk_clear_value, range);
+        } else {
+            throw std::runtime_error("Kompute Memory unsupported memory type");
+        }
     }
 }
 

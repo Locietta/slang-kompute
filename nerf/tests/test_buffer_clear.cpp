@@ -36,7 +36,7 @@ int main() {
 
         auto tensor = mgr.tensorT(initial_data);
 
-        mgr.sequence()->record<kp::OpClear>({tensor}, mgr, 1.0f)->record<kp::OpSyncLocal>({tensor})->eval();
+        mgr.sequence()->record<kp::OpClear>({tensor}, 1.0f)->record<kp::OpSyncLocal>({tensor})->eval();
 
         // check if all values in the buffer are now 1.0f
         auto result = tensor->vector();
@@ -56,7 +56,7 @@ int main() {
             }
             tensors.push_back(mgr.tensorT(initial_data));
         }
-        mgr.sequence()->record<kp::OpClear>(tensors, mgr, 2.0f)->record<kp::OpSyncLocal>(tensors)->eval();
+        mgr.sequence()->record<kp::OpClear>(tensors, 2.0f)->record<kp::OpSyncLocal>(tensors)->eval();
         for (size_t i = 0; i < num_tensors; ++i) {
             auto result = std::dynamic_pointer_cast<kp::TensorT<float>>(tensors[i])->vector();
             for (size_t j = 0; j < buffer_size; ++j) {
@@ -77,7 +77,7 @@ int main() {
         }
         auto seq = mgr.sequence();
         for (size_t i = 0; i < num_tensors_diff_sizes; ++i) {
-            seq->record<kp::OpClear>({tensors_diff_sizes[i]}, mgr, 3.0f);
+            seq->record<kp::OpClear>({tensors_diff_sizes[i]}, 3.0f);
         }
         seq->record<kp::OpSyncLocal>(tensors_diff_sizes)->eval();
         for (size_t i = 0; i < num_tensors_diff_sizes; ++i) {
