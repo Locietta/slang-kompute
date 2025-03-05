@@ -81,6 +81,10 @@ void Trainer::initialize_components() {
     ray_batch_directions_ = manager_.tensorT<float>(config_.batch_size * 3);
     target_pixels_ = manager_.tensorT<float>(config_.batch_size * 3); // RGB values
 
+    // Create positional encoder
+    pos_encoder_ = std::make_unique<PositionalEncoder>(manager_, EncoderType::POSITION);
+    dir_encoder_ = std::make_unique<PositionalEncoder>(manager_, EncoderType::DIRECTION);
+
     // Create samplers (will be initialized in train_one_iteration)
     coarse_sampler_ = nullptr;
     fine_sampler_ = nullptr;
@@ -164,8 +168,14 @@ float Trainer::train_one_iteration() {
     auto coarse_directions = coarse_sampler_->get_sample_directions();
     auto coarse_z_vals = coarse_sampler_->get_sample_z_vals();
 
+    // Encode positions and directions
+    pos_encoder_->encode(coarse_positions);
+    dir_encoder_->encode(coarse_directions);
+    auto encoded_positions = pos_encoder_->get_encoded();
+    auto encoded_directions = dir_encoder_->get_encoded();
+
     // Forward pass through coarse network
-    coarse_network_->forward(coarse_positions, coarse_directions);
+    coarse_network_->forward(encoded_positions, encoded_directions);
     auto coarse_output = coarse_network_->get_output();
 
     // Volume rendering
@@ -268,8 +278,14 @@ float Trainer::validate() {
         auto val_directions = coarse_sampler_->get_sample_directions();
         auto val_z_vals = coarse_sampler_->get_sample_z_vals();
 
+        // Encode positions and directions
+        pos_encoder_->encode(val_positions);
+        dir_encoder_->encode(val_directions);
+        auto encoded_positions = pos_encoder_->get_encoded();
+        auto encoded_directions = dir_encoder_->get_encoded();
+
         // Forward pass
-        coarse_network_->forward(val_positions, val_directions);
+        coarse_network_->forward(encoded_positions, encoded_directions);
         auto val_output = coarse_network_->get_output();
 
         // Volume rendering
@@ -336,8 +352,14 @@ void Trainer::render_test_view(uint32_t view_idx) {
         auto directions = batch_sampler.get_sample_directions();
         auto z_vals = batch_sampler.get_sample_z_vals();
 
+        // Encode positions and directions
+        pos_encoder_->encode(positions);
+        dir_encoder_->encode(directions);
+        auto encoded_positions = pos_encoder_->get_encoded();
+        auto encoded_directions = dir_encoder_->get_encoded();
+
         // Forward pass
-        coarse_network_->forward(positions, directions);
+        coarse_network_->forward(encoded_positions, encoded_directions);
         auto output = coarse_network_->get_output();
 
         // Volume rendering

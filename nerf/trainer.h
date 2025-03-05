@@ -11,6 +11,7 @@
 #include "ray_generator.h"
 #include "ray_sampler.h"
 #include "volume_renderer.h"
+#include "positional_encoder.h"
 
 namespace nerf {
 
@@ -66,6 +67,8 @@ private:
     std::unique_ptr<RayGenerator> ray_generator_;
     std::unique_ptr<RaySampler> coarse_sampler_;
     std::unique_ptr<RaySampler> fine_sampler_; // For hierarchical sampling
+    std::unique_ptr<PositionalEncoder> pos_encoder_;
+    std::unique_ptr<PositionalEncoder> dir_encoder_;
     std::unique_ptr<VolumeRenderer> volume_renderer_;
 
     // Training state
