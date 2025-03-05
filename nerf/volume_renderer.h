@@ -25,6 +25,10 @@ public:
                 std::shared_ptr<kp::TensorT<float>> z_vals,
                 std::shared_ptr<kp::TensorT<float>> rays_d);
 
+    void backward(std::shared_ptr<kp::TensorT<float>> grad_rgb,
+                  std::shared_ptr<kp::TensorT<float>> grad_disp = nullptr,
+                  std::shared_ptr<kp::TensorT<float>> grad_acc = nullptr);
+
     // Get the rendered RGB values
     std::shared_ptr<kp::TensorT<float>> get_rgb();
 
@@ -40,6 +44,8 @@ public:
     // Get the estimated depth map
     std::shared_ptr<kp::TensorT<float>> get_depth();
 
+    std::shared_ptr<kp::TensorT<float>> get_grad_raw();
+    
     // Synchronize all outputs to CPU memory
     void sync_outputs();
 
@@ -70,6 +76,10 @@ private:
 
     // Initialize algorithm
     void initialize_algorithm(uint32_t batch_size, uint32_t n_samples);
+
+    std::shared_ptr<kp::TensorT<float>> grad_raw_;
+    std::shared_ptr<kp::TensorT<float>> internal_grad_disp_;
+    std::shared_ptr<kp::TensorT<float>> internal_grad_acc_;
 };
 
 } // namespace nerf

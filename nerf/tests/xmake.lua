@@ -51,7 +51,7 @@ target("test_volume_renderer")
     add_files("test_volume_renderer.cpp", "../volume_renderer.cpp")
     add_packages("kompute", "fmt", "glm")
     add_rules("slang2spv", { bin2c = true, col_major = true })
-    add_files("../shaders/volume_render.slang")
+    add_files("../shaders/volume_render.slang", "../shaders/volume_render_backward.slang")
     add_tests("default")
 
 target("test_buffer_clear")
