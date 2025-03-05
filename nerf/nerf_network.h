@@ -47,7 +47,7 @@ public:
     void load_weights(const std::string &filename);
 
     // Get all network weights as a vector
-    std::vector<std::shared_ptr<kp::TensorT<float>>> get_weights();
+    std::vector<std::shared_ptr<kp::Memory>> get_weights();
 
     // Set weights from a vector
     void set_weights(const std::vector<std::shared_ptr<kp::TensorT<float>>> &weights);

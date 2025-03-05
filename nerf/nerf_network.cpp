@@ -656,9 +656,9 @@ void NerfNetwork::load_weights(const std::string &filename) {
         ->eval();
 }
 
-std::vector<std::shared_ptr<kp::TensorT<float>>> NerfNetwork::get_weights() {
+std::vector<std::shared_ptr<kp::Memory>> NerfNetwork::get_weights() {
     // Return all weights in a vector
-    std::vector<std::shared_ptr<kp::TensorT<float>>> all_weights;
+    std::vector<std::shared_ptr<kp::Memory>> all_weights;
 
     // First sync all weights from the device
     std::vector<std::shared_ptr<kp::Memory>> sync_weights;

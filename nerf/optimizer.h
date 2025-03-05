@@ -23,14 +23,28 @@ public:
     void add_parameter(std::shared_ptr<kp::TensorT<float>> param);
 
     // Add a parameter tensor and its gradient
-    void add_parameter_with_gradient(std::shared_ptr<kp::TensorT<float>> param, 
-                                   std::shared_ptr<kp::TensorT<float>> grad);
+    void add_parameter_with_gradient(std::shared_ptr<kp::TensorT<float>> param,
+                                     std::shared_ptr<kp::TensorT<float>> grad);
 
     // Update parameters based on gradients
     void step();
 
     // Reset moment accumulators
     void reset();
+
+    uint32_t get_step_count() const { return step_count_; }
+    void set_step_count(uint32_t step_count) { step_count_ = step_count; }
+
+    const std::vector<std::shared_ptr<kp::TensorT<float>>> &get_first_moment_vectors() const {
+        return exp_avg_;
+    }
+
+    const std::vector<std::shared_ptr<kp::TensorT<float>>> &get_second_moment_vectors() const {
+        return exp_avg_sq_;
+    }
+
+    void set_moments(const std::vector<std::shared_ptr<kp::TensorT<float>>> &first_moments,
+                     const std::vector<std::shared_ptr<kp::TensorT<float>>> &second_moments);
 
 private:
     kp::Manager &manager_;
@@ -40,8 +54,8 @@ private:
     // Lists of parameters and their corresponding states
     std::vector<std::shared_ptr<kp::TensorT<float>>> parameters_;
     std::vector<std::shared_ptr<kp::TensorT<float>>> gradients_;
-    std::vector<std::shared_ptr<kp::TensorT<float>>> exp_avg_;     // First moment (momentum)
-    std::vector<std::shared_ptr<kp::TensorT<float>>> exp_avg_sq_;  // Second moment (velocity)
+    std::vector<std::shared_ptr<kp::TensorT<float>>> exp_avg_;    // First moment (momentum)
+    std::vector<std::shared_ptr<kp::TensorT<float>>> exp_avg_sq_; // Second moment (velocity)
 
     // Create algorithm for Adam update
     std::shared_ptr<kp::Algorithm> create_adam_algorithm(

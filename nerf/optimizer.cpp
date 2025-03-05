@@ -98,6 +98,38 @@ void Adam::initialize_parameter_state(size_t param_idx) {
     exp_avg_sq_.push_back(v);
 }
 
+void Adam::set_moments(const std::vector<std::shared_ptr<kp::TensorT<float>>> &first_moments,
+                       const std::vector<std::shared_ptr<kp::TensorT<float>>> &second_moments) {
+    // Verify that the input vectors match our parameter count
+    if (first_moments.size() != parameters_.size() ||
+        second_moments.size() != parameters_.size()) {
+        throw std::runtime_error("Moment vector count doesn't match parameter count");
+    }
+
+    // Copy moment vectors
+    for (size_t i = 0; i < parameters_.size(); ++i) {
+        // Make sure dimensions match
+        if (first_moments[i]->size() != parameters_[i]->size() ||
+            second_moments[i]->size() != parameters_[i]->size()) {
+            throw std::runtime_error("Moment vector dimension mismatch");
+        }
+
+        // Copy data (assuming tensors are already in CPU memory)
+        std::memcpy(exp_avg_[i]->data(), first_moments[i]->data(),
+                    parameters_[i]->size() * sizeof(float));
+        std::memcpy(exp_avg_sq_[i]->data(), second_moments[i]->data(),
+                    parameters_[i]->size() * sizeof(float));
+    }
+
+    // Sync data to GPU
+    auto seq = manager_.sequence();
+    for (auto i = 0zu; i < exp_avg_.size(); ++i) {
+        seq->record<kp::OpSyncDevice>({exp_avg_[i]});
+        seq->record<kp::OpSyncDevice>({exp_avg_sq_[i]});
+    }
+    seq->eval();
+}
+
 void Adam::step() {
     step_count_++;
 
