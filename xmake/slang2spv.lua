@@ -34,6 +34,7 @@ rule("slang2spv")
 
         slangc_opt = {
             path(sourcefile_slang),
+            "-O2",
             "-target", "spirv",
             "-profile", profile,
             col_major and "-matrix-layout-column-major" or "-matrix-layout-row-major",

@@ -2,16 +2,8 @@
 #include "OpClear.h"
 
 #include <bit>
-#include "utils.hpp"
 
 namespace kp {
-
-const static std::vector<uint32_t> k_spirv = [] {
-    constexpr auto cs_code = bytes_to_words(
-#include "buffer_clear.spv.h"
-    );
-    return std::vector(cs_code.begin(), cs_code.end());
-}();
 
 OpClear::OpClear(std::vector<std::shared_ptr<kp::Memory>> mems, float clear_value)
     : mems_(mems), clear_value_(clear_value) {}
