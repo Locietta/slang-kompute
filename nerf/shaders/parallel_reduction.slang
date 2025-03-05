@@ -1,45 +1,48 @@
-// nerf/shaders/mse_forward.slang
+// Define the number of threads per group - typically a power of 2
+#define THREAD_GROUP_SIZE 256
+#define LANE_COUNT 32
+#define WAVE_PER_GROUP (THREAD_GROUP_SIZE / LANE_COUNT)
 
+// Input and output buffers
 [[vk::binding(0, 0)]]
-StructuredBuffer<float> source;
+RWStructuredBuffer<float> source;
 
 [[vk::binding(1, 0)]]
 RWStructuredBuffer<float> result;
 
-groupshared float partial_sums[64];
+// Shared memory for the workgroup
+groupshared float shared[WAVE_PER_GROUP];
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void main(uint3 DTid: SV_DispatchThreadID, uint3 GTid: SV_GroupThreadID, uint3 Gid: SV_GroupID) {
-    uint idx = DTid.x;
-    uint local_idx = GTid.x;
-    uint num_elements = source.getCount();
-    partial_sums[local_idx] = idx < num_elements ? source[idx] : 0.0f;
+[numthreads(THREAD_GROUP_SIZE, 1, 1)]
+void main(uint3 DTid: SV_DispatchThreadID, uint3 GTid: SV_GroupThreadID) {
+    uint groupIndex = GTid.x;
+    uint globalIndex = DTid.x;
 
-    GroupMemoryBarrierWithGroupSync(); // wait until everything is transfered from device memory to shared memory
+    float value = (globalIndex < source.getCount()) ? source[globalIndex] : 0.0f;
 
-    for (uint offset = 32; offset > 0; offset >>= 1) {
-        if (local_idx < offset) {
-            partial_sums[local_idx] += partial_sums[local_idx + offset];
-        }
-        GroupMemoryBarrierWithGroupSync();
+    // This leverages hardware wave operations for the first stage of reduction
+    float waveReduction = WaveActiveSum(value);
+
+    // Only the first lane in each wave writes to shared memory
+    // This dramatically reduces shared memory operations
+    if (WaveIsFirstLane()) {
+        shared[groupIndex / LANE_COUNT] = waveReduction;
     }
 
-    /// DEBUG: WARP unroll not working for me?
+    // Synchronize all threads in the group to ensure all wave reductions are visible
+    GroupMemoryBarrierWithGroupSync();
 
-    // // WARP count: AMD - 64 , NVIDIA - 32
-    // // manually unrolled: don't need group sync in the same WARP
-    // if (local_idx < 32) partial_sums[local_idx] += partial_sums[local_idx + 32];
-    // if (local_idx < 16) partial_sums[local_idx] += partial_sums[local_idx + 16];
-    // if (local_idx < 8) partial_sums[local_idx] += partial_sums[local_idx + 8];
-    // if (local_idx < 4) partial_sums[local_idx] += partial_sums[local_idx + 4];
-    // if (local_idx < 2) partial_sums[local_idx] += partial_sums[local_idx + 2];
-    // if (local_idx < 1) partial_sums[local_idx] += partial_sums[local_idx + 1];
+    // Only the first thread of the first wave does the final reduction
+    if (groupIndex == 0) {
+        float sum = shared[0];
+        [unroll]
+        for (uint i = 1; i < WAVE_PER_GROUP; ++i) {
+            sum += shared[i];
+        }
 
-    // GroupMemoryBarrier();
-
-    if (local_idx == 0) {
+        // Write the result for this workgroup to the output buffer
         /// NOTE: result[0] should be zero inited on CPU side
-        InterlockedAdd(result[0], partial_sums[0]);
+        InterlockedAdd(result[0], sum);
     }
 }

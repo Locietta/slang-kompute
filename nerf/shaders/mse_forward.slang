@@ -1,5 +1,9 @@
 // nerf/shaders/mse_forward.slang
 
+#define THREAD_GROUP_SIZE 256
+#define LANE_COUNT 32
+#define WAVE_PER_GROUP (THREAD_GROUP_SIZE / LANE_COUNT)
+
 [[vk::binding(0, 0)]]
 StructuredBuffer<float> predicted;
 
@@ -9,33 +13,35 @@ StructuredBuffer<float> target;
 [[vk::binding(2, 0)]]
 RWStructuredBuffer<float> loss_value;
 
-groupshared float partial_sums[64];
+groupshared float partial_sums[WAVE_PER_GROUP];
 
 [shader("compute")]
-[numthreads(64, 1, 1)]
-void main(uint3 DTid: SV_DispatchThreadID, uint3 GTid: SV_GroupThreadID, uint3 Gid: SV_GroupID) {
+[numthreads(THREAD_GROUP_SIZE, 1, 1)]
+void main(uint3 DTid: SV_DispatchThreadID, uint3 GTid: SV_GroupThreadID) {
     uint idx = DTid.x;
     uint local_idx = GTid.x;
     uint num_elements = predicted.getCount();
 
-    float squared_error = 0.0f;
-    if (idx < num_elements) {
-        float diff = predicted[idx] - target[idx];
-        squared_error = diff * diff;
+    float error = (idx < num_elements) ? (predicted[idx] - target[idx]) : 0.0f;
+    float squared_error = error * error;
+
+    float waveReduction = WaveActiveSum(squared_error);
+
+    if (WaveIsFirstLane()) {
+        partial_sums[local_idx / LANE_COUNT] = waveReduction;
     }
 
-    partial_sums[local_idx] = squared_error;
-    GroupMemoryBarrierWithGroupSync(); // wait until everything is transfered from device memory to shared memory
-
-    for (uint stride = 32; stride > 0; stride >>= 1) {
-        if (local_idx < stride) {
-            partial_sums[local_idx] += partial_sums[local_idx + stride];
-        }
-        GroupMemoryBarrierWithGroupSync();
-    }
+    // Synchronize all threads in the group to ensure all wave reductions are visible
+    GroupMemoryBarrierWithGroupSync();
 
     if (local_idx == 0) {
+        float sum = partial_sums[0];
+        [unroll]
+        for (uint i = 1; i < WAVE_PER_GROUP; ++i) {
+            sum += partial_sums[i];
+        }
+
         /// NOTE: loss_value[0] should be zero inited on CPU side
-        InterlockedAdd(loss_value[0], partial_sums[0] / num_elements);
+        InterlockedAdd(loss_value[0], sum / num_elements);
     }
 }

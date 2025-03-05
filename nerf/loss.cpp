@@ -6,6 +6,21 @@
 
 namespace nerf {
 
+// Load shader code upon program init
+static const std::vector<uint32_t> k_spirv_forward = [] {
+    constexpr auto mse_forward_code = bytes_to_words(
+#include "mse_forward.spv.h"
+    );
+    return std::vector<uint32_t>(mse_forward_code.begin(), mse_forward_code.end());
+}();
+
+static const std::vector<uint32_t> k_spirv_backward = [] {
+    constexpr auto mse_backward_code = bytes_to_words(
+#include "mse_backward.spv.h"
+    );
+    return std::vector<uint32_t>(mse_backward_code.begin(), mse_backward_code.end());
+}();
+
 MSELoss::MSELoss(kp::Manager &manager) : manager_(manager) {
     // Create tensor to store loss value
     // Initialize to zero
@@ -17,21 +32,15 @@ std::shared_ptr<kp::Algorithm> MSELoss::create_forward_algorithm(
     std::shared_ptr<kp::TensorT<float>> target,
     std::shared_ptr<kp::TensorT<float>> loss_output) {
 
-    // Load shader code
-    constexpr auto mse_forward_code = bytes_to_words(
-#include "mse_forward.spv.h"
-    );
-    std::vector<uint32_t> spirv(mse_forward_code.begin(), mse_forward_code.end());
-
     // Calculate workgroup size
-    uint32_t workgroup_size = 64;
-    uint32_t num_elements = predicted->size();
-    uint32_t num_groups = divide_and_round_up(num_elements, workgroup_size);
+    constexpr uint32_t workgroup_size = 256;
+    const uint32_t num_elements = predicted->size();
+    const uint32_t num_groups = divide_and_round_up(num_elements, workgroup_size);
 
     // Create algorithm
     return manager_.algorithm(
         {predicted, target, loss_output},
-        spirv,
+        k_spirv_forward,
         kp::Workgroup({num_groups, 1, 1}));
 }
 
@@ -39,22 +48,15 @@ std::shared_ptr<kp::Algorithm> MSELoss::create_backward_algorithm(
     std::shared_ptr<kp::TensorT<float>> predicted,
     std::shared_ptr<kp::TensorT<float>> target,
     std::shared_ptr<kp::TensorT<float>> grad_output) {
-
-    // Load shader code
-    constexpr auto mse_backward_code = bytes_to_words(
-#include "mse_backward.spv.h"
-    );
-    std::vector<uint32_t> spirv(mse_backward_code.begin(), mse_backward_code.end());
-
     // Calculate workgroup size
-    uint32_t workgroup_size = 64;
-    uint32_t num_elements = predicted->size();
-    uint32_t num_groups = divide_and_round_up(num_elements, workgroup_size);
+    constexpr uint32_t workgroup_size = 64;
+    const uint32_t num_elements = predicted->size();
+    const uint32_t num_groups = divide_and_round_up(num_elements, workgroup_size);
 
     // Create algorithm
     return manager_.algorithm(
         {predicted, target, grad_output},
-        spirv,
+        k_spirv_backward,
         kp::Workgroup({num_groups, 1, 1}));
 }
 

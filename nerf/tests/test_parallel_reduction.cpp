@@ -40,14 +40,13 @@ private:
     std::shared_ptr<kp::Algorithm> create_algorithm(
         std::shared_ptr<kp::TensorT<float>> array,
         std::shared_ptr<kp::TensorT<float>> result) {
-        uint32_t workgroup_size = 64;
-        uint32_t num_elements = array->size();
-        uint32_t num_groups = divide_and_round_up(num_elements, workgroup_size);
+        constexpr uint32_t workgroup_size = 256;
+        const uint32_t num_elements = array->size();
+        const uint32_t num_groups = divide_and_round_up(num_elements, workgroup_size);
         return manager_.algorithm(
             {array, result},
             k_spirv,
-            kp::Workgroup({num_groups, 1, 1})
-        );
+            kp::Workgroup({num_groups, 1, 1}));
     }
 };
 
@@ -71,12 +70,69 @@ int main() {
 
         Reduce op(mgr);
 
-        std::vector<float> data{1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f};
+        std::vector<float> data{
+            1.0f,
+            2.0f,
+            3.0f,
+            4.0f,
+            5.0f,
+            6.0f,
+            7.0f,
+            8.0f,
+            9.0f,
+            10.0f,
+            11.0f,
+            12.0f,
+            13.0f,
+            14.0f,
+            15.0f,
+            16.0f,
+            17.0f,
+            18.0f,
+            19.0f,
+            20.0f,
+            21.0f,
+            22.0f,
+            23.0f,
+            24.0f,
+            25.0f,
+            26.0f,
+            27.0f,
+            28.0f,
+            29.0f,
+            30.0f,
+            31.0f,
+            32.0f,
+            33.0f,
+            34.0f,
+            35.0f,
+            36.0f,
+            37.0f,
+            38.0f,
+            39.0f,
+            40.0f,
+            41.0f,
+            42.0f,
+            43.0f,
+            44.0f,
+            45.0f,
+            46.0f,
+            47.0f,
+            48.0f,
+            49.0f,
+            50.0f,
+            51.0f,
+            52.0f,
+            53.0f,
+            54.0f,
+            55.0f,
+        };
+
         auto tensor = mgr.tensorT(data);
         float sum = op.reduce(tensor);
         fmt::print("Sum: {}\n", sum);
 
-        TEST_ASSERT(float_equals(sum, 55.0f), "Sum should be 55.0");
+        TEST_ASSERT(float_equals(sum, 1540.0f), "Sum should be 55.0");
 
         /// random large array
         std::random_device rd;

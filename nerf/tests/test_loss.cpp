@@ -15,7 +15,7 @@
     } while (0)
 
 bool float_equals(float a, float b, float epsilon = 1e-5f) {
-    return std::abs(a - b) < epsilon;
+    return std::abs(a - b) / a < epsilon;
 }
 
 int main() {
@@ -77,7 +77,7 @@ int main() {
         }
 
         /// Test 3: MSE loss with larger random tensors
-        const size_t large_size = 8;
+        const size_t large_size = 1024 * 64;
 
         // Generate random data
         std::random_device rd;
@@ -91,8 +91,8 @@ int main() {
             large_target[i] = dis(gen);
         }
 
-        fmt::println("large_predicted: {}", large_predicted);
-        fmt::println("large_target: {}", large_target);
+        // fmt::println("large_predicted: {}", large_predicted);
+        // fmt::println("large_target: {}", large_target);
 
         auto large_pred_tensor = mgr.tensorT(large_predicted);
         auto large_target_tensor = mgr.tensorT(large_target);
@@ -109,7 +109,7 @@ int main() {
         float large_computed_loss = loss.compute(large_pred_tensor, large_target_tensor);
         fmt::println("Large tensor - Expected loss: {}", large_expected_loss);
         fmt::println("Large tensor - Computed loss: {}", large_computed_loss);
-        TEST_ASSERT(float_equals(large_computed_loss, large_expected_loss, 1e-3f),
+        TEST_ASSERT(float_equals(large_computed_loss, large_expected_loss),
                     "Large tensor loss doesn't match expected value");
 
         // Test gradient for large tensors
