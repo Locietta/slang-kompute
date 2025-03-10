@@ -47,17 +47,15 @@ void Trainer::initialize_components() {
 
     // Create optimizer
     AdamParams adam_params;
-    optimizer_ = std::make_unique<Adam>(manager_, adam_params);
+    auto const & network_weights = coarse_network_->get_weights_tensors();
+    auto const &network_gradients = coarse_network_->get_gradients_tensors();
 
-    // Add network parameters to optimizer
-    for (auto &param : coarse_network_->get_weights()) {
-        optimizer_->add_parameter(std::reinterpret_pointer_cast<kp::TensorT<float>>(param));
-    }
+    optimizer_ = std::make_unique<Adam>(manager_, network_weights, network_gradients, adam_params);
 
     if (config_.use_hierarchical_sampling && fine_network_) {
-        for (auto &param : fine_network_->get_weights()) {
-            optimizer_->add_parameter(std::reinterpret_pointer_cast<kp::TensorT<float>>(param));
-        }
+        auto const &fine_network_weights = fine_network_->get_weights_tensors();
+        auto const &fine_network_gradients = fine_network_->get_gradients_tensors();
+        optimizer_->add_parameters_with_gradients(fine_network_weights, fine_network_gradients);
     }
 
     // Create loss function

@@ -16,15 +16,19 @@ struct AdamParams {
 
 class Adam {
 public:
-    Adam(kp::Manager &manager, const AdamParams &params = {});
-    ~Adam() = default;
+    Adam(kp::Manager &manager,
+         const std::vector<std::shared_ptr<kp::TensorT<float>>> &params,
+         const std::vector<std::shared_ptr<kp::TensorT<float>>> &grads,
+         const AdamParams &super_params = {});
 
-    // Add a parameter tensor to be optimized
-    void add_parameter(std::shared_ptr<kp::TensorT<float>> param);
+    ~Adam() = default;
 
     // Add a parameter tensor and its gradient
     void add_parameter_with_gradient(std::shared_ptr<kp::TensorT<float>> param,
                                      std::shared_ptr<kp::TensorT<float>> grad);
+
+    void add_parameters_with_gradients(const std::vector<std::shared_ptr<kp::TensorT<float>>> &params,
+                                       const std::vector<std::shared_ptr<kp::TensorT<float>>> &grads);
 
     // Update parameters based on gradients
     void step();
@@ -48,7 +52,7 @@ public:
 
 private:
     kp::Manager &manager_;
-    AdamParams params_;
+    AdamParams super_params_;
     uint32_t step_count_ = 0;
 
     // Lists of parameters and their corresponding states
@@ -56,6 +60,8 @@ private:
     std::vector<std::shared_ptr<kp::TensorT<float>>> gradients_;
     std::vector<std::shared_ptr<kp::TensorT<float>>> exp_avg_;    // First moment (momentum)
     std::vector<std::shared_ptr<kp::TensorT<float>>> exp_avg_sq_; // Second moment (velocity)
+
+    std::vector<std::shared_ptr<kp::Algorithm>> algorithms_;
 
     // Create algorithm for Adam update
     std::shared_ptr<kp::Algorithm> create_adam_algorithm(
@@ -68,7 +74,7 @@ private:
         float beta2_t);
 
     // Initialize a parameter's state
-    void initialize_parameter_state(size_t param_idx);
+    void initialize_parameter_moment(size_t param_idx);
 };
 
 } // namespace nerf

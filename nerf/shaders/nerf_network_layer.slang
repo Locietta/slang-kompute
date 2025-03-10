@@ -45,26 +45,18 @@ void main(uint3 DTid: SV_DispatchThreadID) {
     for (uint out_idx = 0; out_idx < params.output_dim; out_idx++) {
         float sum = bias[out_idx];
 
-        uint effective_input_dim = params.input_dim;
-        uint skip_input_dim = 0;
-
-        // If using skip connection, account for concatenated input
-        if (bool(params.use_skip_connection)) {
-            // Note: We assume that skip_input has the same shape as the original input
-            skip_input_dim = params.input_dim - effective_input_dim;
-        }
-
-        // Sum weighted inputs: input * weights for the base input
-        for (uint in_idx = 0; in_idx < effective_input_dim; in_idx++) {
+        // Process the regular input
+        for (uint in_idx = 0; in_idx < params.input_dim; in_idx++) {
             uint weight_idx = out_idx * params.input_dim + in_idx;
             sum += input[input_base + in_idx] * weights[weight_idx];
         }
 
         // Add skip connection if needed
         if (bool(params.use_skip_connection)) {
-            for (uint skip_idx = 0; skip_idx < skip_input_dim; skip_idx++) {
-                uint weight_idx = out_idx * params.input_dim + effective_input_dim + skip_idx;
-                sum += skip_input[batch_idx * skip_input_dim + skip_idx] * weights[weight_idx];
+            uint skip_dim = params.input_dim; // Assuming skip input has same dimension as regular input
+            for (uint skip_idx = 0; skip_idx < skip_dim; skip_idx++) {
+                uint weight_idx = out_idx * (params.input_dim + skip_dim) + params.input_dim + skip_idx;
+                sum += skip_input[batch_idx * skip_dim + skip_idx] * weights[weight_idx];
             }
         }
 

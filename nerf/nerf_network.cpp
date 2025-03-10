@@ -5,15 +5,58 @@
 #include <random>
 #include <stdexcept>
 
-#include "kompute_ext.hpp"
-
 namespace nerf {
+
+const static std::vector<uint32_t> k_spirv_mlp = [] {
+    constexpr auto layer_cs_code = bytes_to_words(
+#include "nerf_network_layer.spv.h"
+    );
+    return std::vector<uint32_t>(layer_cs_code.begin(), layer_cs_code.end());
+}();
+
+const static std::vector<uint32_t> k_spirv_mlp_backward = [] {
+    constexpr auto layer_cs_code = bytes_to_words(
+#include "nerf_network_layer_backward.spv.h"
+    );
+    return std::vector<uint32_t>(layer_cs_code.begin(), layer_cs_code.end());
+}();
+
+const static std::vector<uint32_t> k_spirv_feature = [] {
+    constexpr auto layer_cs_code = bytes_to_words(
+#include "nerf_feature_extraction.spv.h"
+    );
+    return std::vector<uint32_t>(layer_cs_code.begin(), layer_cs_code.end());
+}();
+
+const static std::vector<uint32_t> k_spirv_feature_backward = [] {
+    constexpr auto layer_cs_code = bytes_to_words(
+#include "nerf_feature_backward.spv.h"
+    );
+    return std::vector<uint32_t>(layer_cs_code.begin(), layer_cs_code.end());
+}();
+
+const static std::vector<uint32_t> k_spirv_view = [] {
+    constexpr auto layer_cs_code = bytes_to_words(
+#include "nerf_view_dependent.spv.h"
+    );
+    return std::vector<uint32_t>(layer_cs_code.begin(), layer_cs_code.end());
+}();
+
+const static std::vector<uint32_t> k_spirv_view_backward = [] {
+    constexpr auto layer_cs_code = bytes_to_words(
+#include "nerf_view_backward.spv.h"
+    );
+    return std::vector<uint32_t>(layer_cs_code.begin(), layer_cs_code.end());
+}();
 
 NerfNetwork::NerfNetwork(kp::Manager &manager, const MLPParams &params)
     : manager_(manager), params_(params) {
 
     // Initialize weights
     initialize_weights();
+
+    // Initialize gradients
+    initialize_gradients();
 
     // Initialize algorithms
     initialize_algorithms();
@@ -23,7 +66,10 @@ void NerfNetwork::initialize_weights() {
     // Create random number generator
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::normal_distribution<float> dist(0.0f, 0.01f); // Small standard deviation for initialization
+
+    const float std_dev = sqrt(1.0f / (float) params_.W);
+
+    std::normal_distribution<float> dist(0.0f, std_dev); // Small standard deviation for initialization
 
     // Initialize MLP weights
     weights_.clear();
@@ -133,23 +179,84 @@ void NerfNetwork::initialize_weights() {
         ->eval();
 }
 
+void NerfNetwork::initialize_gradients() {
+    // Initialize gradients for MLP weights and biases
+    grad_weights_.clear();
+    grad_biases_.clear();
+
+    for (size_t i = 0; i < weights_.size(); i++) {
+        std::vector<float> grad_w(weights_[i]->size(), 0.0f);
+        std::vector<float> grad_b(biases_[i]->size(), 0.0f);
+        grad_weights_.push_back(manager_.tensorT(grad_w));
+        grad_biases_.push_back(manager_.tensorT(grad_b));
+    }
+
+    // Initialize gradients for hidden states - one per layer
+    grad_hidden_states_.clear();
+    for (uint32_t i = 0; i < params_.D; i++) {
+        // We'll resize these properly in backward() when we know the batch size
+        std::vector<float> grad_layer(0, 0.0f);
+        grad_hidden_states_.push_back(manager_.tensorT(grad_layer));
+    }
+
+    if (params_.use_viewdirs) {
+        // Initialize gradients for view-dependent components
+        std::vector<float> grad_feature_w(params_.W * params_.W, 0.0f);
+        std::vector<float> grad_feature_b(params_.W, 0.0f);
+        grad_feature_weights_ = manager_.tensorT(grad_feature_w);
+        grad_feature_bias_ = manager_.tensorT(grad_feature_b);
+
+        std::vector<float> grad_alpha_w(params_.W, 0.0f);
+        std::vector<float> grad_alpha_b(1, 0.0f);
+        grad_alpha_weights_ = manager_.tensorT(grad_alpha_w);
+        grad_alpha_bias_ = manager_.tensorT(grad_alpha_b);
+
+        // View branch gradients
+        grad_view_weights_.clear();
+        grad_view_biases_.clear();
+
+        uint32_t view_prev_dim = params_.input_ch_views + params_.W;
+        uint32_t view_current_dim = params_.W / 2;
+
+        std::vector<float> grad_view_w(view_prev_dim * view_current_dim, 0.0f);
+        std::vector<float> grad_view_b(view_current_dim, 0.0f);
+        grad_view_weights_.push_back(manager_.tensorT(grad_view_w));
+        grad_view_biases_.push_back(manager_.tensorT(grad_view_b));
+
+        std::vector<float> grad_rgb_w(view_current_dim * 3, 0.0f);
+        std::vector<float> grad_rgb_b(3, 0.0f);
+        grad_rgb_weights_ = manager_.tensorT(grad_rgb_w);
+        grad_rgb_bias_ = manager_.tensorT(grad_rgb_b);
+
+        // Additional storage for feature extraction gradients
+        std::vector<float> grad_density_feat(0, 0.0f); // Will resize in backward()
+        grad_density_features_ = manager_.tensorT(grad_density_feat);
+    } else {
+        // Simple output gradients
+        std::vector<float> grad_rgb_w(params_.W * params_.output_ch, 0.0f);
+        std::vector<float> grad_rgb_b(params_.output_ch, 0.0f);
+        grad_rgb_weights_ = manager_.tensorT(grad_rgb_w);
+        grad_rgb_bias_ = manager_.tensorT(grad_rgb_b);
+    }
+}
+
 void NerfNetwork::initialize_algorithms() {
     // We'll create the actual algorithms when we know the batch size in forward()
     layer_algos_.clear();
 }
 
 void NerfNetwork::initialize_tensors(uint32_t batch_size) {
-    // Initialize hidden state tensor to hold all intermediate layer outputs
-    // Size is batch_size * W for each layer plus one for the output
-    std::vector<float> hidden_states(batch_size * params_.W * (params_.D + 1), 0.0f);
-    hidden_states_ = manager_.tensorT(hidden_states);
+    // Initialize separate hidden state tensors for each layer
+    hidden_states_.clear();
+
+    // Create a tensor for each layer's output
+    for (uint32_t i = 0; i < params_.D; i++) {
+        std::vector<float> layer_output(batch_size * params_.W, 0.0f);
+        hidden_states_.push_back(manager_.tensorT(layer_output));
+    }
 
     if (params_.use_viewdirs) {
         // For view-dependent model, we need additional tensors
-        std::vector<float> view_output(batch_size * (params_.W / 2), 0.0f);
-        std::vector<float> density_output(batch_size, 0.0f);
-
-        // Final output is RGB + density = 4 channels
         std::vector<float> output_data(batch_size * params_.output_ch, 0.0f);
         output_ = manager_.tensorT(output_data);
     } else {
@@ -174,12 +281,6 @@ std::shared_ptr<kp::Algorithm> NerfNetwork::create_layer_algorithm(
     bool skip_connection,
     std::shared_ptr<kp::TensorT<float>> skip_input) {
 
-    // Create and compile the shader for a neural network layer
-    constexpr auto layer_cs_code = bytes_to_words(
-#include "nerf_network_layer.spv.h"
-    );
-    std::vector<uint32_t> spirv(layer_cs_code.begin(), layer_cs_code.end());
-
     // Set up parameters
     std::vector<std::shared_ptr<kp::Memory>> algo_params = {
         input_tensor,
@@ -192,7 +293,7 @@ std::shared_ptr<kp::Algorithm> NerfNetwork::create_layer_algorithm(
     }
 
     // Calculate workgroup size
-    uint32_t workgroup_size = 64;
+    constexpr uint32_t workgroup_size = 64;
     uint32_t batch_size = input_tensor->size() / input_dim;
     uint32_t num_groups = divide_and_round_up(batch_size, workgroup_size);
 
@@ -212,7 +313,7 @@ std::shared_ptr<kp::Algorithm> NerfNetwork::create_layer_algorithm(
 
     // Create algorithm
     return manager_.algorithm<uint32_t, LayerParams>(
-        algo_params, spirv, kp::Workgroup({num_groups, 1, 1}), {}, {layer_params});
+        algo_params, k_spirv_mlp, kp::Workgroup({num_groups, 1, 1}), {}, {layer_params});
 }
 
 void NerfNetwork::forward(std::shared_ptr<kp::TensorT<float>> positions,
@@ -225,7 +326,7 @@ void NerfNetwork::forward(std::shared_ptr<kp::TensorT<float>> positions,
     uint32_t batch_size = positions_->size() / params_.input_ch;
 
     // Initialize tensors if not already done or if batch size changed
-    if (!output_ || output_->size() != batch_size * params_.output_ch) {
+    if (hidden_states_.empty() || (hidden_states_.size() > 0 && hidden_states_[0]->size() != batch_size * params_.W)) {
         initialize_tensors(batch_size);
     }
 
@@ -260,29 +361,20 @@ void NerfNetwork::forward(std::shared_ptr<kp::TensorT<float>> positions,
             input_dim = params_.W + params_.input_ch;
         }
 
-        // Calculate offset into hidden_states_ tensor for input and output
-        uint32_t input_offset = (i == 0) ? 0 : (i - 1) * batch_size * params_.W;
-        uint32_t output_offset = i * batch_size * params_.W;
-
-        // Create slices of hidden_states_ for input and output
-        // For first layer, we use positions directly
-        std::shared_ptr<kp::TensorT<float>> input_slice;
+        // Get input and output tensors for this layer
+        std::shared_ptr<kp::TensorT<float>> input_tensor;
         if (i == 0) {
-            input_slice = positions_;
+            input_tensor = positions_;
         } else {
-            // Use span to create a view into the hidden_states_ tensor
-            std::span<float> input_span(hidden_states_->data() + input_offset, batch_size * params_.W);
-            input_slice = kp::tensorT(manager_, input_span);
+            input_tensor = hidden_states_[i - 1];
         }
 
-        // Output slice using span
-        std::span<float> output_span(hidden_states_->data() + output_offset, batch_size * output_dim);
-        std::shared_ptr<kp::TensorT<float>> output_slice = kp::tensorT(manager_, output_span);
+        std::shared_ptr<kp::TensorT<float>> output_tensor = hidden_states_[i];
 
         // Create algorithm for this layer
         auto layer_algo = create_layer_algorithm(
             input_dim, output_dim,
-            input_slice, output_slice,
+            input_tensor, output_tensor,
             weights_[i], biases_[i],
             use_skip, skip_input_);
 
@@ -297,11 +389,7 @@ void NerfNetwork::forward(std::shared_ptr<kp::TensorT<float>> positions,
     // After MLP processing, handle output
     if (params_.use_viewdirs) {
         // 1. Extract features and compute density from the last MLP layer
-        uint32_t last_layer_offset = (params_.D - 1) * batch_size * params_.W;
-
-        // Create span views for inputs/outputs
-        std::span<float> last_output_span(hidden_states_->data() + last_layer_offset, batch_size * params_.W);
-        std::shared_ptr<kp::TensorT<float>> last_layer_output = kp::tensorT(manager_, last_output_span);
+        std::shared_ptr<kp::TensorT<float>> last_layer_output = hidden_states_[params_.D - 1];
 
         // Create intermediate tensors for extracted features and density
         std::vector<float> features_data(batch_size * params_.W, 0.0f);
@@ -310,11 +398,6 @@ void NerfNetwork::forward(std::shared_ptr<kp::TensorT<float>> positions,
         auto density_tensor = manager_.tensorT(density_data);
 
         // Create feature extraction algorithm
-        constexpr auto feature_cs_code = bytes_to_words(
-#include "nerf_feature_extraction.spv.h"
-        );
-        std::vector<uint32_t> feature_spirv(feature_cs_code.begin(), feature_cs_code.end());
-
         std::vector<std::shared_ptr<kp::Memory>> feature_algo_params = {
             last_layer_output,
             features_tensor,
@@ -324,7 +407,7 @@ void NerfNetwork::forward(std::shared_ptr<kp::TensorT<float>> positions,
             alpha_weights_,
             alpha_bias_};
 
-        uint32_t workgroup_size = 64;
+        constexpr uint32_t workgroup_size = 64;
         uint32_t num_groups = divide_and_round_up(batch_size, workgroup_size);
 
         // Feature extraction parameters
@@ -339,7 +422,7 @@ void NerfNetwork::forward(std::shared_ptr<kp::TensorT<float>> positions,
 
         // Create and run feature extraction algorithm
         auto feature_algo = manager_.algorithm<uint32_t, FeatureParams>(
-            feature_algo_params, feature_spirv, kp::Workgroup({num_groups, 1, 1}), {}, {feature_params});
+            feature_algo_params, k_spirv_feature, kp::Workgroup({num_groups, 1, 1}), {}, {feature_params});
 
         manager_.sequence()
             ->record<kp::OpAlgoDispatch>(feature_algo)
@@ -352,11 +435,6 @@ void NerfNetwork::forward(std::shared_ptr<kp::TensorT<float>> positions,
         }
 
         // Create view-dependent algorithm
-        constexpr auto view_cs_code = bytes_to_words(
-#include "nerf_view_dependent.spv.h"
-        );
-        std::vector<uint32_t> view_spirv(view_cs_code.begin(), view_cs_code.end());
-
         std::vector<std::shared_ptr<kp::Memory>> view_algo_params = {
             features_tensor,
             directions_,
@@ -384,18 +462,14 @@ void NerfNetwork::forward(std::shared_ptr<kp::TensorT<float>> positions,
 
         // Create and run view-dependent algorithm
         auto view_algo = manager_.algorithm<uint32_t, ViewParams>(
-            view_algo_params, view_spirv, kp::Workgroup({num_groups, 1, 1}), {}, {view_params});
+            view_algo_params, k_spirv_view, kp::Workgroup({num_groups, 1, 1}), {}, {view_params});
 
         manager_.sequence()
             ->record<kp::OpAlgoDispatch>(view_algo)
             ->eval();
     } else {
         // For simple model, just apply final linear layer
-        uint32_t last_layer_offset = (params_.D - 1) * batch_size * params_.W;
-
-        // Output slice using span
-        std::span last_output_span(hidden_states_->data() + last_layer_offset, batch_size * params_.W);
-        std::shared_ptr<kp::TensorT<float>> last_layer_output = kp::tensorT(manager_, last_output_span);
+        std::shared_ptr<kp::TensorT<float>> last_layer_output = hidden_states_[params_.D - 1];
 
         // Create final output algorithm
         auto output_algo = create_layer_algorithm(
@@ -408,6 +482,233 @@ void NerfNetwork::forward(std::shared_ptr<kp::TensorT<float>> positions,
         // Run final layer
         manager_.sequence()
             ->record<kp::OpAlgoDispatch>(output_algo)
+            ->eval();
+    }
+}
+
+void NerfNetwork::backward(std::shared_ptr<kp::TensorT<float>> grad_output) {
+    grad_output_ = grad_output;
+    // Get batch size from positions tensor
+    uint32_t batch_size = positions_->size() / params_.input_ch;
+
+    // Sync gradient input to device
+    manager_.sequence()
+        ->record<kp::OpSyncDevice>({grad_output_})
+        ->eval();
+
+    if (params_.use_viewdirs) {
+        // For view-dependent model, we need to backpropagate through:
+        // 1. RGB output layer
+        // 2. View-dependent branch
+        // 3. Feature extraction layer
+        // 4. Main MLP
+
+        // 1. Backpropagate through view-dependent branch
+        constexpr uint32_t workgroup_size = 64;
+        uint32_t num_groups = divide_and_round_up(batch_size, workgroup_size);
+
+        // View-dependent parameters
+        struct ViewParams {
+            uint32_t batch_size;
+            uint32_t feature_dim;
+            uint32_t view_dim;
+            uint32_t rgb_dim;
+        };
+
+        ViewParams view_params = {
+            batch_size,
+            params_.W,
+            params_.input_ch_views,
+            3 // RGB has 3 components
+        };
+
+        // Create temporary buffer for alpha gradients
+        std::vector<float> alpha_grad_data(batch_size, 0.0f);
+        auto alpha_grad = manager_.tensorT(alpha_grad_data);
+
+        // Create view backward algorithm
+        std::vector<std::shared_ptr<kp::Memory>> view_backward_params = {
+            grad_output_,           // Gradient from output
+            feature_weights_,       // Extracted features
+            directions_,            // View directions
+            grad_density_features_, // Gradient for features
+            grad_view_weights_[0],  // Gradient for view weights
+            grad_view_biases_[0],   // Gradient for view bias
+            grad_rgb_weights_,      // Gradient for RGB weights
+            grad_rgb_bias_,         // Gradient for RGB bias
+            view_weights_[0],       // Original view weights
+            rgb_weights_,           // Original RGB weights
+            view_biases_[0],        // Original view bias
+            rgb_bias_,              // Original RGB bias
+            alpha_grad              // Gradient for density (alpha)
+        };
+
+        auto view_backward_algo = manager_.algorithm<uint32_t, ViewParams>(
+            view_backward_params, k_spirv_view_backward,
+            kp::Workgroup({num_groups, 1, 1}), {}, {view_params});
+
+        manager_.sequence()
+            ->record<kp::OpAlgoDispatch>(view_backward_algo)
+            ->eval();
+
+        // 2. Backpropagate through feature extraction
+        struct FeatureParams {
+            uint32_t batch_size;
+            uint32_t feature_dim;
+        };
+
+        FeatureParams feature_params = {
+            batch_size,
+            params_.W};
+
+        // Get last layer output
+        std::shared_ptr<kp::TensorT<float>> last_layer_output = hidden_states_[params_.D - 1];
+
+        // Create feature backward algorithm
+        std::vector<std::shared_ptr<kp::Memory>> feature_backward_params = {
+            grad_density_features_,             // Gradient from view branch
+            alpha_grad,                         // Gradient for density
+            last_layer_output,                  // Last layer features
+            grad_feature_weights_,              // Gradient for feature weights
+            grad_feature_bias_,                 // Gradient for feature bias
+            grad_alpha_weights_,                // Gradient for alpha weights
+            grad_alpha_bias_,                   // Gradient for alpha bias
+            grad_hidden_states_[params_.D - 1], // Gradient for MLP output
+            feature_weights_,                   // Original feature weights
+            alpha_weights_,                     // Original alpha weights
+            feature_bias_                       // Original feature bias
+        };
+
+        auto feature_backward_algo = manager_.algorithm<uint32_t, FeatureParams>(
+            feature_backward_params, k_spirv_feature_backward,
+            kp::Workgroup({num_groups, 1, 1}), {}, {feature_params});
+
+        manager_.sequence()
+            ->record<kp::OpAlgoDispatch>(feature_backward_algo)
+            ->eval();
+    } else {
+        // For simple model, backpropagate directly from output to last layer
+
+        // Backpropagate through final output layer
+        struct LayerParams {
+            uint32_t input_dim;
+            uint32_t output_dim;
+            uint32_t batch_size;
+            uint32_t use_skip_connection;
+        };
+
+        LayerParams output_layer_params = {
+            params_.W,
+            params_.output_ch,
+            batch_size,
+            0u // No skip connection
+        };
+
+        std::shared_ptr<kp::TensorT<float>> last_layer_output = hidden_states_[params_.D - 1];
+
+        // Create backward algorithm for output layer
+        std::vector<std::shared_ptr<kp::Memory>> output_backward_params = {
+            grad_output_,                       // Gradient from output
+            last_layer_output,                  // Layer input
+            output_,                            // Layer output
+            rgb_weights_,                       // Layer weights
+            rgb_bias_,                          // Layer bias
+            grad_hidden_states_[params_.D - 1], // Gradient for previous layer
+            grad_rgb_weights_,                  // Gradient for weights
+            grad_rgb_bias_,                     // Gradient for bias
+            nullptr,                            // No skip connection
+            nullptr                             // No skip gradient
+        };
+
+        constexpr uint32_t workgroup_size = 64;
+        uint32_t num_groups = divide_and_round_up(batch_size, workgroup_size);
+
+        auto output_backward_algo = manager_.algorithm<uint32_t, LayerParams>(
+            output_backward_params, k_spirv_mlp_backward,
+            kp::Workgroup({num_groups, 1, 1}), {}, {output_layer_params});
+
+        manager_.sequence()
+            ->record<kp::OpAlgoDispatch>(output_backward_algo)
+            ->eval();
+    }
+
+    // 3. Backpropagate through main MLP layers
+    for (int32_t i = params_.D - 1; i >= 0; i--) {
+        uint32_t input_dim = (i == 0) ? params_.input_ch : params_.W;
+        uint32_t output_dim = params_.W;
+
+        // For layer at 'skips', we have a skip connection
+        bool use_skip = (i == params_.skips && i > 0);
+        if (use_skip) {
+            input_dim = params_.W + params_.input_ch;
+        }
+
+        // Get input and output tensors for this layer
+        std::shared_ptr<kp::TensorT<float>> input_tensor;
+        if (i == 0) {
+            input_tensor = positions_;
+        } else {
+            input_tensor = hidden_states_[i - 1];
+        }
+
+        std::shared_ptr<kp::TensorT<float>> output_tensor = hidden_states_[i];
+
+        // Get gradient tensors
+        std::shared_ptr<kp::TensorT<float>> grad_input_tensor;
+        if (i == 0) {
+            // For first layer, we don't need to backpropagate to input
+            std::vector<float> dummy_grad(batch_size * input_dim, 0.0f);
+            grad_input_tensor = manager_.tensorT(dummy_grad);
+        } else {
+            grad_input_tensor = grad_hidden_states_[i - 1];
+        }
+
+        std::shared_ptr<kp::TensorT<float>> grad_output_tensor = grad_hidden_states_[i];
+
+        // Create backward algorithm parameters
+        struct LayerParams {
+            uint32_t input_dim;
+            uint32_t output_dim;
+            uint32_t batch_size;
+            uint32_t use_skip_connection;
+        };
+
+        LayerParams layer_params = {
+            input_dim,
+            output_dim,
+            batch_size,
+            use_skip ? 1u : 0u};
+
+        // Create skip connection tensors if needed
+        std::shared_ptr<kp::TensorT<float>> grad_skip = nullptr;
+        if (use_skip) {
+            std::vector<float> grad_skip_data(batch_size * params_.input_ch, 0.0f);
+            grad_skip = manager_.tensorT(grad_skip_data);
+        }
+
+        // Create backward algorithm
+        std::vector<std::shared_ptr<kp::Memory>> layer_backward_params = {
+            grad_output_tensor,               // Gradient from next layer
+            input_tensor,                     // Layer input
+            output_tensor,                    // Layer output
+            weights_[i],                      // Layer weights
+            biases_[i],                       // Layer bias
+            grad_input_tensor,                // Gradient for previous layer
+            grad_weights_[i],                 // Gradient for weights
+            grad_biases_[i],                  // Gradient for bias
+            use_skip ? skip_input_ : nullptr, // Skip connection input
+            use_skip ? grad_skip : nullptr    // Gradient for skip input
+        };
+
+        constexpr uint32_t workgroup_size = 64;
+        uint32_t num_groups = divide_and_round_up(batch_size, workgroup_size);
+
+        auto layer_backward_algo = manager_.algorithm<uint32_t, LayerParams>(
+            layer_backward_params, k_spirv_mlp_backward,
+            kp::Workgroup({num_groups, 1, 1}), {}, {layer_params});
+
+        manager_.sequence()
+            ->record<kp::OpAlgoDispatch>(layer_backward_algo)
             ->eval();
     }
 }
@@ -657,31 +958,8 @@ void NerfNetwork::load_weights(const std::string &filename) {
 }
 
 std::vector<std::shared_ptr<kp::Memory>> NerfNetwork::get_weights() {
-    // Return all weights in a vector
+    // Return all weights in a vector without syncing to host
     std::vector<std::shared_ptr<kp::Memory>> all_weights;
-
-    // First sync all weights from the device
-    std::vector<std::shared_ptr<kp::Memory>> sync_weights;
-    sync_weights.insert(sync_weights.end(), weights_.begin(), weights_.end());
-    sync_weights.insert(sync_weights.end(), biases_.begin(), biases_.end());
-
-    if (params_.use_viewdirs) {
-        sync_weights.push_back(feature_weights_);
-        sync_weights.push_back(feature_bias_);
-        sync_weights.push_back(alpha_weights_);
-        sync_weights.push_back(alpha_bias_);
-        sync_weights.insert(sync_weights.end(), view_weights_.begin(), view_weights_.end());
-        sync_weights.insert(sync_weights.end(), view_biases_.begin(), view_biases_.end());
-        sync_weights.push_back(rgb_weights_);
-        sync_weights.push_back(rgb_bias_);
-    } else {
-        sync_weights.push_back(rgb_weights_);
-        sync_weights.push_back(rgb_bias_);
-    }
-
-    manager_.sequence()
-        ->record<kp::OpSyncLocal>(sync_weights)
-        ->eval();
 
     // Add all weights to the result vector
     all_weights.insert(all_weights.end(), weights_.begin(), weights_.end());
@@ -704,6 +982,80 @@ std::vector<std::shared_ptr<kp::Memory>> NerfNetwork::get_weights() {
     return all_weights;
 }
 
+std::vector<std::shared_ptr<kp::TensorT<float>>> NerfNetwork::get_weights_tensors() {
+    // Return all weights in a vector without syncing to host
+    std::vector<std::shared_ptr<kp::TensorT<float>>> all_weights;
+
+    // Add all weights to the result vector
+    all_weights.insert(all_weights.end(), weights_.begin(), weights_.end());
+    all_weights.insert(all_weights.end(), biases_.begin(), biases_.end());
+
+    if (params_.use_viewdirs) {
+        all_weights.push_back(feature_weights_);
+        all_weights.push_back(feature_bias_);
+        all_weights.push_back(alpha_weights_);
+        all_weights.push_back(alpha_bias_);
+        all_weights.insert(all_weights.end(), view_weights_.begin(), view_weights_.end());
+        all_weights.insert(all_weights.end(), view_biases_.begin(), view_biases_.end());
+        all_weights.push_back(rgb_weights_);
+        all_weights.push_back(rgb_bias_);
+    } else {
+        all_weights.push_back(rgb_weights_);
+        all_weights.push_back(rgb_bias_);
+    }
+
+    return all_weights;
+}
+
+std::vector<std::shared_ptr<kp::Memory>> NerfNetwork::get_gradients() {
+    // Get gradients for MLP weights and biases
+    std::vector<std::shared_ptr<kp::Memory>> all_gradients;
+
+    // Add gradients for MLP weights and biases
+    all_gradients.insert(all_gradients.end(), grad_weights_.begin(), grad_weights_.end());
+    all_gradients.insert(all_gradients.end(), grad_biases_.begin(), grad_biases_.end());
+
+    if (params_.use_viewdirs) {
+        all_gradients.push_back(grad_feature_weights_);
+        all_gradients.push_back(grad_feature_bias_);
+        all_gradients.push_back(grad_alpha_weights_);
+        all_gradients.push_back(grad_alpha_bias_);
+        all_gradients.insert(all_gradients.end(), grad_view_weights_.begin(), grad_view_weights_.end());
+        all_gradients.insert(all_gradients.end(), grad_view_biases_.begin(), grad_view_biases_.end());
+        all_gradients.push_back(grad_rgb_weights_);
+        all_gradients.push_back(grad_rgb_bias_);
+    } else {
+        all_gradients.push_back(grad_rgb_weights_);
+        all_gradients.push_back(grad_rgb_bias_);
+    }
+
+    return all_gradients;
+}
+
+std::vector<std::shared_ptr<kp::TensorT<float>>> NerfNetwork::get_gradients_tensors() {
+    // Get gradients for MLP weights and biases
+    std::vector<std::shared_ptr<kp::TensorT<float>>> all_gradients;
+
+    // Add gradients for MLP weights and biases
+    all_gradients.insert(all_gradients.end(), grad_weights_.begin(), grad_weights_.end());
+    all_gradients.insert(all_gradients.end(), grad_biases_.begin(), grad_biases_.end());
+
+    if (params_.use_viewdirs) {
+        all_gradients.push_back(grad_feature_weights_);
+        all_gradients.push_back(grad_feature_bias_);
+        all_gradients.push_back(grad_alpha_weights_);
+        all_gradients.push_back(grad_alpha_bias_);
+        all_gradients.insert(all_gradients.end(), grad_view_weights_.begin(), grad_view_weights_.end());
+        all_gradients.insert(all_gradients.end(), grad_view_biases_.begin(), grad_view_biases_.end());
+        all_gradients.push_back(grad_rgb_weights_);
+        all_gradients.push_back(grad_rgb_bias_);
+    } else {
+        all_gradients.push_back(grad_rgb_weights_);
+        all_gradients.push_back(grad_rgb_bias_);
+    }
+
+    return all_gradients;
+}
 void NerfNetwork::set_weights(const std::vector<std::shared_ptr<kp::TensorT<float>>> &weights) {
     // Check if we have the correct number of weights
     size_t expected_count = weights_.size() + biases_.size();

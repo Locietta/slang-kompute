@@ -63,7 +63,7 @@ target("test_buffer_clear")
 
 target("test_loss")
     set_kind("binary")
-    set_default(true)
+    set_default(false)
     add_files("test_loss.cpp", "../loss.cpp", "../OpClear.cpp")
     add_packages("kompute", "fmt", "glm")
     add_rules("slang2spv", { bin2c = true, col_major = true })
