@@ -42,6 +42,10 @@ rule("slang2spv")
             "-entry", "main",
         }
 
+        if opt.debug then
+            slangc_opt = table.join(slangc_opt, {"-g3"})
+        end
+
         batchcmds:vrunv(slangc.program, slangc_opt)
 
         -- bin2c
