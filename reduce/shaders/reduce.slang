@@ -22,7 +22,6 @@ void main(uint3 DTid: SV_DispatchThreadID, uint3 GTid: SV_GroupThreadID, uint3 G
     }
 
     if (local_idx == 0) {
-        /// NOTE: result[0] should be zero inited on CPU side
-        InterlockedAdd(result[0], partial_sums[0]);
+        result[Gid.x] = partial_sums[0];
     }
 }

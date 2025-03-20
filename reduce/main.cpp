@@ -1,33 +1,33 @@
 #include <kompute/Kompute.hpp>
 #include <random>
 #include <vector>
-#include <chrono>
 #include <concepts>
 #include <fmt/core.h>
 
 #include "utils.hpp"
-#include "OpClear.h"
 
-static float period = 0.0f;
+// Initialize Kompute with atomic float extension
+const static std::vector<std::string> k_extensions = {"VK_EXT_shader_atomic_float"};
+const static std::vector<uint32_t> k_family_queue_indices{};
+static kp::Manager manager = kp::Manager(0, k_family_queue_indices, k_extensions);
+const static float k_period = manager.getDeviceProperties().limits.timestampPeriod;
 
 // Measure execution time with warm-up and averaging
-template <std::invocable F, std::invocable F2>
-double measure_time(F &&func, F2 &&cleaner, int warmup_runs = 10, int measurement_runs = 30) {
+template <std::invocable F>
+double measure_time(F &&func, int warmup_runs = 10, int measurement_runs = 30) {
     // Warm-up runs
     for (int i = 0; i < warmup_runs; ++i) {
         func();
     }
 
     // Measurement runs
-    std::vector<double> times(measurement_runs);
+    std::vector<float> times(measurement_runs);
     for (int i = 0; i < measurement_runs; ++i) {
-        cleaner();
-        auto time_stampes = func();
-        times[i] = static_cast<float>(time_stampes[1] - time_stampes[0]) * period / 1000000.0f;
+        times[i] = func();
     }
 
     // Calculate average time
-    double sum = 0.0;
+    float sum = 0.0f;
     for (const auto time : times) {
         sum += time;
     }
@@ -59,84 +59,88 @@ constexpr auto k_thread_group_size = 256u;
 std::random_device rd;
 std::mt19937 gen(42);
 
+constexpr uint32_t calc_reduce_times(uint32_t length, uint32_t group_size) noexcept {
+    if (length <= 1) return 0;
+
+    const uint32_t a_msb_pos = 32u - std::countl_zero(length - 1);
+    const uint32_t b_msb_pos = 32u - std::countl_zero(group_size - 1);
+
+    return divide_and_round_up(a_msb_pos, b_msb_pos);
+}
+
+/// ret: time_consumed
+float recursive_reduce(kp::Manager &mgr, std::vector<float> const &data, std::vector<uint32_t> const &spirv, uint32_t group_size, float &output) {
+    // group_size must be a power of 2 and greater than 1
+    assert((group_size & (group_size - 1)) == 0 && group_size > 1);
+
+    const uint32_t length = data.size();
+    if (length == 0) {
+        output = 0.0f;
+        return 0.0f;
+    } else if (length == 1) {
+        output = data[0];
+        return 0.0f;
+    }
+    const auto reduce_times = calc_reduce_times(length, group_size);
+    std::vector<std::shared_ptr<kp::TensorT<float>>> tensors;
+    tensors.reserve(reduce_times + 1); // +1 for the final result tensor
+    tensors.push_back(mgr.tensorT(data));
+    mgr.sequence()->eval<kp::OpSyncDevice>({tensors[0]}); // upload data to GPU
+
+    std::vector<std::shared_ptr<kp::Algorithm>> algorithms;
+    for (auto i = 0u, l = length; i < reduce_times; ++i) {
+        const auto dispatch_count = divide_and_round_up(l, group_size);
+        tensors.push_back(mgr.tensorT<float>(dispatch_count));
+        const auto algo = mgr.algorithm({tensors[i], tensors[i + 1]}, spirv, kp::Workgroup({dispatch_count, 1, 1}));
+        algorithms.push_back(algo);
+        l = divide_and_round_up(l, group_size);
+    }
+
+    // Record the algorithms
+    const auto seq = mgr.sequence(0, reduce_times + 1);
+    for (auto i = 0u; i < reduce_times; ++i) {
+        seq->record<kp::OpAlgoDispatch>(algorithms[i]);
+    }
+    seq->eval();
+
+    const auto timestamps = seq->getTimestamps();
+    double time_consumed = 0.0;
+    for (auto i = 0uz; i < reduce_times; ++i) {
+        double dispatch_time = (timestamps[i + 1] - timestamps[i]) * k_period / 1000000.0f;
+        time_consumed += dispatch_time;
+    }
+
+    seq->eval<kp::OpSyncLocal>({tensors[reduce_times]});
+    output = tensors[reduce_times]->data()[0];
+    return time_consumed;
+}
+
 int main() {
-    // Initialize Kompute with atomic float extension
-    const std::vector<std::string> extensions = {"VK_EXT_shader_atomic_float"};
-    const std::vector<uint32_t> family_queue_indices;
-
-    kp::Manager manager = kp::Manager(0, family_queue_indices, extensions);
-
-    period = manager.getDeviceProperties().limits.timestampPeriod;
 
     // Test size (32M)
     constexpr uint32_t size = 1u << 25; // 32M
 
     fmt::println("Testing with size: {}", size);
 
-    // std::this_thread::sleep_for(std::chrono::seconds(5));
-    // system("pause");
-
     // Generate random input data
     std::vector<float> input_data(size);
-    float cpu_sum = 0.0f;
+    double cpu_sum = 0.0;
     std::uniform_real_distribution<float> dis(0.0f, 1.0f);
     for (auto &val : input_data) {
         val = dis(gen);
         cpu_sum += val;
     }
 
-    // Create Kompute tensors
-    auto tensor_input = manager.tensorT(input_data);
-    auto tensor_output = manager.tensorT<float>(1);           // Single float for result
-    auto tensor_output_optimized = manager.tensorT<float>(1); // Single float for result
-    auto tensor_output_wave = manager.tensorT<float>(1);      // Single float for result
+    float result = 0.0f;
 
-    // Create algorithm
-    const auto dispatch_count = divide_and_round_up(size, k_thread_group_size);
-    const auto dispatch_count_optimized = divide_and_round_up(size, k_thread_group_size * 2);
-
-    auto naive_algo = manager.algorithm({tensor_input, tensor_output}, k_spirv_naive, kp::Workgroup({dispatch_count, 1, 1}));
-    auto optimized_algo = manager.algorithm({tensor_input, tensor_output_optimized}, k_spirv_optimized, kp::Workgroup({dispatch_count_optimized, 1, 1}));
-    auto wave_algo = manager.algorithm({tensor_input, tensor_output_wave}, k_spirv_wave, kp::Workgroup({dispatch_count, 1, 1}));
-
-    manager.sequence()->eval<kp::OpSyncDevice>({tensor_input});
-
-    // Measure execution time
-    double naive_time = measure_time([&] { return manager.sequence(0, 2)->eval<kp::OpAlgoDispatch>(naive_algo)->getTimestamps(); },
-                                     [&] { manager.sequence()->eval<kp::OpClear>({tensor_output}); });
-    double wave_time = measure_time([&] { return manager.sequence(0, 2)->eval<kp::OpAlgoDispatch>(wave_algo)->getTimestamps(); },
-                                    [&] { manager.sequence()->eval<kp::OpClear>({tensor_output_wave}); });
-    double optimized_time = measure_time([&] { return manager.sequence(0, 2)->eval<kp::OpAlgoDispatch>(optimized_algo)->getTimestamps(); },
-                                         [&] { manager.sequence()->eval<kp::OpClear>({tensor_output_optimized}); });
-
-    // Sync the data from GPU to CPU
-    manager.sequence()
-        ->record<kp::OpSyncLocal>({tensor_output})
-        ->record<kp::OpSyncLocal>({tensor_output_optimized})
-        ->record<kp::OpSyncLocal>({tensor_output_wave})
-        ->eval();
-
-    // Get result and verify
-    float naive_sum = tensor_output->data()[0];
-    float optimized_sum = tensor_output_optimized->data()[0];
-    float wave_sum = tensor_output_wave->data()[0];
-
-    float naive_relative_error = std::abs(cpu_sum - naive_sum) / cpu_sum;
-    float optimized_relative_error = std::abs(cpu_sum - optimized_sum) / cpu_sum;
-    float wave_relative_error = std::abs(cpu_sum - wave_sum) / cpu_sum;
+    const float time_consumed = measure_time([&] {
+        return recursive_reduce(manager, input_data, k_spirv_optimized, k_thread_group_size * 2, result);
+    });
 
     fmt::println("CPU sum: {}", cpu_sum);
-    fmt::println("Naive sum: {}", naive_sum);
-    fmt::println("Naive Relative error: {}", naive_relative_error);
-    fmt::println("Optimized sum: {}", optimized_sum);
-    fmt::println("Optimized Relative error: {}", optimized_relative_error);
-    fmt::println("Wave sum: {}", wave_sum);
-    fmt::println("Wave relative error: {}", wave_relative_error);
-
-    fmt::println("Naive execution time: {:.4f} ms", naive_time);
-    fmt::println("Optimized execution time: {:.4f} ms", optimized_time);
-    fmt::println("Wave execution time: {:.4f} ms", wave_time);
-    // system("pause");
+    fmt::println("GPU sum: {}", result);
+    fmt::println("Time consumed: {} ms", time_consumed);
+    fmt::println("Relative error: {}", std::abs(cpu_sum - result) / cpu_sum);
 
     return 0;
 }

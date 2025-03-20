@@ -7,22 +7,18 @@ package("kompute")
 
     set_sourcedir(path.join(os.scriptdir(), "kompute"))
 
-    add_deps("cmake", "vulkan-loader")
+    add_deps("cmake", "vulkan-loader", "fmt")
     on_install(function (package)
         local configs = {}
         table.insert(configs, "-DCMAKE_BUILD_TYPE=" .. (package:debug() and "Debug" or "Release"))
         table.insert(configs, "-DKOMPUTE_OPT_BUILD_AS_SHARED_LIB=" .. (package:config("shared") and "ON" or "OFF"))
-        table.insert(configs, "-DKOMPUTE_OPT_USE_BUILT_IN_FMT=ON")
+        table.insert(configs, "-DKOMPUTE_OPT_USE_BUILT_IN_FMT=OFF")
         table.insert(configs, "-DKOMPUTE_OPT_USE_BUILT_IN_GOOGLE_TEST=ON" )
         table.insert(configs, "-DKOMPUTE_OPT_USE_BUILT_IN_PYBIND11=ON")
         table.insert(configs, "-DKOMPUTE_OPT_USE_BUILT_IN_VULKAN_HEADER=ON")
+        table.insert(configs, "-DKOMPUTE_OPT_USE_BUILT_IN_SPDLOG=OFF")
+        table.insert(configs, "-DKOMPUTE_OPT_LOG_LEVEL=Off")
         table.insert(configs, "-DKOMPUTE_OPT_INSTALL=ON")
-        
-        if package:is_plat("linux") then
-            table.insert(configs, "-DKOMPUTE_OPT_USE_BUILT_IN_SPDLOG=OFF")
-            table.insert(configs, "-DKOMPUTE_OPT_USE_SPDLOG=OFF")
-            table.insert(configs, "-DKOMPUTE_OPT_LOG_LEVEL=Off")
-        end
 
         if package:config("vk_header_version") ~= nil then
             local vk_header_version = package:config("vk_header_version")

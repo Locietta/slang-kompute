@@ -2,42 +2,29 @@
 
 #include "util/common.slang"
 
-#define LANE_COUNT 32
-#define WAVE_PER_GROUP (THREAD_GROUP_SIZE / LANE_COUNT)
-
 // Shared memory for the workgroup
-groupshared float shared[WAVE_PER_GROUP];
+groupshared float warp_level_sums[WAVE_PER_GROUP];
 
 [shader("compute")]
 [numthreads(THREAD_GROUP_SIZE, 1, 1)]
-void main(uint3 DTid: SV_DispatchThreadID, uint3 GTid: SV_GroupThreadID) {
-    uint groupIndex = GTid.x;
-    uint globalIndex = DTid.x;
+void main(uint3 DTid: SV_DispatchThreadID, uint3 GTid: SV_GroupThreadID, uint3 Gid: SV_GroupID) {
+    uint local_idx = GTid.x;
+    uint idx = Gid.x * THREAD_GROUP_SIZE * 2 + local_idx;
+    uint num_elements = source.getCount();
 
-    float value = source[globalIndex];
+    float sum = idx < num_elements ? source[idx] : 0.0f;
+    sum += idx + THREAD_GROUP_SIZE < num_elements ? source[idx + THREAD_GROUP_SIZE] : 0.0f;
 
-    // This leverages hardware wave operations for the first stage of reduction
-    float waveReduction = WaveActiveSum(value);
+    uint lane_id = WaveGetLaneIndex();
+    uint warp_id = local_idx / WARP_SIZE;
 
-    // Only the first lane in each wave writes to shared memory
-    // This dramatically reduces shared memory operations
-    if (WaveIsFirstLane()) {
-        shared[groupIndex / LANE_COUNT] = waveReduction;
-    }
+    sum = WaveActiveSum(sum);
+    if (WaveIsFirstLane()) warp_level_sums[warp_id] = sum;
 
     // Synchronize all threads in the group to ensure all wave reductions are visible
     GroupMemoryBarrierWithGroupSync();
 
-    // Only the first thread of the first wave does the final reduction
-    if (groupIndex == 0) {
-        float sum = shared[0];
-        [unroll]
-        for (uint i = 1; i < WAVE_PER_GROUP; ++i) {
-            sum += shared[i];
-        }
-
-        // Write the result for this workgroup to the output buffer
-        /// NOTE: result[0] should be zero inited on CPU side
-        InterlockedAdd(result[0], sum);
-    }
+    sum = (local_idx < WAVE_PER_GROUP) ? warp_level_sums[lane_id] : 0.0f;
+    if (warp_id == 0) sum = WaveActiveSum(sum); // Final reduce using first warp
+    if (local_idx == 0) result[Gid.x] = sum; // Write the result for the group
 }

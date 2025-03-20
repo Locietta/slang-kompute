@@ -19,7 +19,8 @@ consteval auto bytes_to_words(Byte byte, Args... bytes) {
     return words;
 }
 
-template <std::integral T>
+template <std::unsigned_integral T>
 constexpr T divide_and_round_up(T dividend, T divisor) {
-    return (dividend + divisor - 1) / divisor;
+    if (dividend == 0) return 0;
+    return (dividend - 1) / divisor + 1;
 }
